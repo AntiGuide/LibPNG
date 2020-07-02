@@ -1,9 +1,11 @@
 using System;
 
 namespace LibPNG {
-    internal class IDAT {
+    public class IDAT {
+        public readonly byte[] Data;
+        
         public IDAT(in ReadOnlySpan<byte> chunkData) {
-            throw new NotImplementedException();
+            Data = chunkData.ToArray();
         }
     }
 }

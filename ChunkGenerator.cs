@@ -37,16 +37,16 @@ namespace LibPNG {
             var chunkData = data.Slice(4, length);
             switch (chunkType) {
                 case ChunkType.IHDR:
-                    new IHDR(chunkData);
+                    Decoder.AddChunk(new IHDR(chunkData));
                     return ChunkType.IHDR;
                 case ChunkType.PLTE:
-                    new PLTE(chunkData);
+                    Decoder.AddChunk(new PLTE(chunkData));
                     return ChunkType.PLTE;
                 case ChunkType.IDAT:
-                    new IDAT(chunkData);
+                    Decoder.AddChunk(new IDAT(chunkData));
                     return ChunkType.IDAT;
                 case ChunkType.IEND:
-                    new IEND(chunkData);
+                    Decoder.AddChunk(new IEND(chunkData));
                     return ChunkType.IEND;
                 default:
                     throw new ArgumentOutOfRangeException();

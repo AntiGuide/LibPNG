@@ -6,4 +6,9 @@
         <LangVersion>8</LangVersion>
     </PropertyGroup>
 
+    <ItemGroup>
+      <PackageReference Include="SixLabors.ImageSharp" Version="1.0.0-rc0003" />
+      <PackageReference Include="Zlib.Portable.Signed" Version="1.11.0" />
+    </ItemGroup>
+
 </Project>

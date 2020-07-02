@@ -1,9 +1,10 @@
 using System;
 using System.Buffers.Binary;
 using System.Diagnostics;
+using System.Text;
 
 namespace LibPNG {
-    internal struct IHDR {
+    public struct IHDR {
         // Data
         public readonly uint Width;
         public readonly uint Height;
@@ -93,6 +94,18 @@ namespace LibPNG {
             var interlaceMethod = chunkData[12];
             Debug.Assert(interlaceMethod == (int) InterlaceMethodEnum.NO_INTERLACE || interlaceMethod == (int) InterlaceMethodEnum.ADAM7_INTERLACE, $"{nameof(interlaceMethod)} may only be {InterlaceMethodEnum.NO_INTERLACE} or {InterlaceMethodEnum.ADAM7_INTERLACE} but was {interlaceMethod}");
             InterlaceMethod = (InterlaceMethodEnum) interlaceMethod;
+        }
+
+        public override string ToString() {
+            var sb = new StringBuilder();
+            sb.AppendLine($"{nameof(Width)}: {Width}");
+            sb.AppendLine($"{nameof(Height)}: {Height}");
+            sb.AppendLine($"{nameof(BitDepth)}: {BitDepth}");
+            sb.AppendLine($"{nameof(ColourType)}: {ColourType}");
+            sb.AppendLine($"{nameof(CompressionMethod)}: {CompressionMethod}");
+            sb.AppendLine($"{nameof(FilterMethod)}: {FilterMethod}");
+            sb.AppendLine($"{nameof(InterlaceMethod)}: {InterlaceMethod}");
+            return sb.ToString();
         }
     }
 }

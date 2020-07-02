@@ -1,5 +1,6 @@
 ﻿using System;
 using System.IO;
+using SixLabors.ImageSharp;
 
 namespace LibPNG {
     class Program {
@@ -13,7 +14,9 @@ namespace LibPNG {
                 throw;
             }
 
-            var bitmap = Decoder.Decode(fileStream);
+            using var image = Decoder.Decode(fileStream);
+            using var fs = new FileStream($"{Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)}/Dokumente/LibPNG/Test_RGBA_8BPC_Output.bmp", FileMode.Create, FileAccess.Write);
+            image.SaveAsBmp(fs);
         }
     }
 }
