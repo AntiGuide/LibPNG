@@ -9,7 +9,7 @@ namespace LibPNG.Tests {
         /// </summary>
         [Test]
         public void Decode_RGBA_8BPC() {
-            var filePath = $"{Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)}/Dokumente/LibPNG/Test_RGBA_8BPC.png";
+            var filePath = $"{Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)}/Dokumente/LibPNG/Tests/Test_RGBA_8BPC.png";
             var fileStream = File.Open(filePath, FileMode.Open);
             using var image = Decoder.Decode(fileStream);
             Assert.That(image, Is.Not.Null);
@@ -20,7 +20,7 @@ namespace LibPNG.Tests {
         /// </summary>
         [Test]
         public void Decode_RGBA_8BPC_Big() {
-            var filePath = $"{Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)}/Dokumente/LibPNG/Test_RGBA_8BPC_Big.png";
+            var filePath = $"{Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)}/Dokumente/LibPNG/Tests/Test_RGBA_8BPC_Big.png";
             var fileStream = File.Open(filePath, FileMode.Open);
             using var image = Decoder.Decode(fileStream);
             Assert.That(image, Is.Not.Null);
