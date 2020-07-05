@@ -98,7 +98,12 @@ namespace LibPNG {
                         }
                         break;
                     case FilterType.AVERAGE:
-                        throw new NotImplementedException($"{FilterType.AVERAGE} is not implemented at the moment");
+                        for (var i = 0; i < ihdr.Width; i++) {
+                            var x = new Rgba32(uncompressedData[filterTypeMarker+i*4+1], uncompressedData[filterTypeMarker+i*4+2], uncompressedData[filterTypeMarker+i*4+3], uncompressedData[filterTypeMarker+i*4+4]);
+                            var a = i == 0 ? new Rgba32(0,0,0,0) : bmp[i - 1, aktLine];
+                            var b = aktLine == 0 ? new Rgba32(0,0,0,0) : bmp[i, aktLine - 1];
+                            bmp[i, aktLine] = x.Add(a.Average(b));
+                        }
                         break;
                     case FilterType.PAETH:
                         throw new NotImplementedException($"{FilterType.PAETH} is not implemented at the moment");
