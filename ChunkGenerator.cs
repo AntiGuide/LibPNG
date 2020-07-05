@@ -12,7 +12,8 @@ namespace LibPNG {
             {new byte[] {73, 69, 78, 68}, ChunkType.IEND},
         };
 
-        public static ChunkType GenerateChunk(ReadOnlySpan<byte> data, int length) {
+        /// <returns>Returns if this was the last chunk</returns>
+        public static bool GenerateChunk(ReadOnlySpan<byte> data, int length, Metadata metadata) {
             //Chunk Type
             var chunkTypeSpan = data.Slice(0, 4);
             
@@ -37,17 +38,17 @@ namespace LibPNG {
             var chunkData = data.Slice(4, length);
             switch (chunkType) {
                 case ChunkType.IHDR:
-                    Decoder.AddChunk(new IHDR(chunkData));
-                    return ChunkType.IHDR;
+                    IHDR.Read(chunkData, metadata);
+                    return false;
                 case ChunkType.PLTE:
-                    Decoder.AddChunk(new PLTE(chunkData));
-                    return ChunkType.PLTE;
+                    PLTE.Read(chunkData, metadata);
+                    return false;
                 case ChunkType.IDAT:
-                    Decoder.AddChunk(new IDAT(chunkData));
-                    return ChunkType.IDAT;
+                    IDAT.Read(chunkData, metadata);
+                    return false;
                 case ChunkType.IEND:
-                    Decoder.AddChunk(new IEND(chunkData));
-                    return ChunkType.IEND;
+                    IEND.Read(chunkData, metadata);
+                    return true;
                 default:
                     throw new ArgumentOutOfRangeException();
             }

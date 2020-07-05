@@ -1,11 +1,9 @@
 using System;
 
 namespace LibPNG {
-    public class IDAT {
-        public readonly byte[] Data;
-        
-        public IDAT(in ReadOnlySpan<byte> chunkData) {
-            Data = chunkData.ToArray();
+    public static class IDAT {
+        public static void Read(in ReadOnlySpan<byte> chunkData, Metadata metadata) {
+            metadata.Data.AddRange(chunkData.ToArray());
         }
     }
 }
