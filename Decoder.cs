@@ -14,6 +14,9 @@ namespace LibPNG {
         PLTE,
         IDAT,
         IEND,
+        tEXt,
+        zTXt,
+        iTXt,
     }
     
     public enum FilterType : byte {

@@ -10,6 +10,9 @@ namespace LibPNG {
             {new byte[] {80, 76, 84, 69}, ChunkType.PLTE},
             {new byte[] {73, 68, 65, 84}, ChunkType.IDAT},
             {new byte[] {73, 69, 78, 68}, ChunkType.IEND},
+            {new byte[] {116, 69, 88, 116}, ChunkType.tEXt},
+            {new byte[] {122, 84, 88, 116}, ChunkType.zTXt},
+            {new byte[] {105, 84, 88, 116}, ChunkType.iTXt},
         };
 
         /// <returns>Returns if this was the last chunk</returns>
@@ -22,7 +25,7 @@ namespace LibPNG {
                 if (chunkTypeSpan.SequenceEqual(key)) chunkType = value;
             }
             
-            Debug.Assert(chunkType != null, $"{nameof(chunkType)} matched no known types");
+            Debug.Assert(chunkType != null, $"{nameof(chunkType)} matched no known types. Type was {System.Text.Encoding.ASCII.GetString(chunkTypeSpan)}");
 
             var isCriticalChunk = (chunkTypeSpan[0] & 32) == 0;
             var isPublicChunk = (chunkTypeSpan[1] & 32) == 0;
@@ -49,6 +52,15 @@ namespace LibPNG {
                 case ChunkType.IEND:
                     IEND.Read(chunkData, metadata);
                     return true;
+                case ChunkType.tEXt:
+                    tEXt.Read(chunkData, metadata);
+                    return false;
+                case ChunkType.zTXt:
+                    zTXt.Read(chunkData, metadata);
+                    return false;
+                case ChunkType.iTXt:
+                    iTXt.Read(chunkData, metadata);
+                    return false;
                 default:
                     throw new ArgumentOutOfRangeException();
             }
