@@ -1,0 +1,15 @@
+{
+    "name": "Unity.LibPNG",
+    "references": [
+        "GUID:2346c8736372f684eb3e4829f920b7f2"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
