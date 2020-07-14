@@ -1,15 +1,16 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.IO.Compression;
 using System.Text;
-using Ionic.Zlib;
+using CompressionMode = System.IO.Compression.CompressionMode;
 
 namespace LibPNG {
     /// <summary>
     /// This is compressed text and may be EXIF data
     /// </summary>
     public static class zTXt {
-        public static void Read(in ReadOnlySpan<byte> chunkData, Metadata metadata) {
+        public static void Read(in byte[] chunkData, Metadata metadata) {
             var sb = new StringBuilder();
             var position = 0;
             while (chunkData[position] != 0) {
@@ -24,7 +25,9 @@ namespace LibPNG {
             position++;
             Debug.Assert(compressionMethod == 0);
 
-            var zlibStream = new ZlibStream(new MemoryStream(chunkData.Slice(position).ToArray()), CompressionMode.Decompress);
+            var subArray = new byte[4];
+            Array.Copy(chunkData, position, subArray, 0, chunkData.Length - position);
+            var zlibStream = new DeflateStream(new MemoryStream(subArray), CompressionMode.Decompress);
             var decompressed = new byte[4096];
             int bytesRead;
             sb.Clear();

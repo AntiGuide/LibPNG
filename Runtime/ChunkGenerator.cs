@@ -1,7 +1,8 @@
 using System;
-using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
+using System.Linq;
 
 namespace LibPNG {
     public static class ChunkGenerator {
@@ -16,29 +17,37 @@ namespace LibPNG {
         };
 
         /// <returns>Returns if this was the last chunk</returns>
-        public static bool GenerateChunk(ReadOnlySpan<byte> data, int length, Metadata metadata) {
+        public static bool GenerateChunk(Stream stream, int length, Metadata metadata) {
             //Chunk Type
-            var chunkTypeSpan = data.Slice(0, 4);
+            var chunkTypeSpan = new byte[4];
+            stream.Read(chunkTypeSpan, 0, 4);
+            var crcData = new List<byte>();
+            crcData.AddRange(chunkTypeSpan);
             
             ChunkType? chunkType = null;
-            foreach (var (key, value) in chunkTypeAssociation) {
-                if (chunkTypeSpan.SequenceEqual(key)) chunkType = value;
+            foreach (var cta in chunkTypeAssociation.Where(cta => chunkTypeSpan.SequenceEqual(cta.Key))) {
+                chunkType = cta.Value;
+                break;
             }
-            
-            Debug.Assert(chunkType != null, $"{nameof(chunkType)} matched no known types. Type was {System.Text.Encoding.ASCII.GetString(chunkTypeSpan)}");
 
             var isCriticalChunk = (chunkTypeSpan[0] & 32) == 0;
             var isPublicChunk = (chunkTypeSpan[1] & 32) == 0;
             var isCompatiblePNGVersion = (chunkTypeSpan[2] & 32) == 0;
             var isSafeToCopy = (chunkTypeSpan[3] & 32) == 1;
+
+            var chunkData = new byte[length];
+            stream.Read(chunkData, 0, length);
+            crcData.AddRange(chunkData);
             
             // CRC
-            var expectedCRC = BinaryPrimitives.ReadUInt32BigEndian(data.Slice(4 + length, 4));
-            var calculatedCRC = CRC32.Calculate(data.Slice(0, 4 + length));
+            var crcValueData = new byte[4];
+            stream.Read(crcValueData, 0, 4);
+            if (BitConverter.IsLittleEndian) Array.Reverse(crcValueData);
+            var expectedCRC = BitConverter.ToUInt32(crcValueData, 0);
+            var calculatedCRC = CRC32.Calculate(crcData);
             Debug.Assert(expectedCRC == calculatedCRC, "CRC check failed. The data seems to be damaged.");
             
             // Chunk Data
-            var chunkData = data.Slice(4, length);
             switch (chunkType) {
                 case ChunkType.IHDR:
                     IHDR.Read(chunkData, metadata);
@@ -52,17 +61,10 @@ namespace LibPNG {
                 case ChunkType.IEND:
                     IEND.Read(chunkData, metadata);
                     return true;
-                case ChunkType.tEXt:
-                    tEXt.Read(chunkData, metadata);
-                    return false;
-                case ChunkType.zTXt:
-                    zTXt.Read(chunkData, metadata);
-                    return false;
-                case ChunkType.iTXt:
-                    iTXt.Read(chunkData, metadata);
-                    return false;
                 default:
-                    throw new ArgumentOutOfRangeException();
+                    if (isCriticalChunk) throw new Exception($"{nameof(chunkType)} matched no known types. Type was {System.Text.Encoding.ASCII.GetString(chunkTypeSpan)}");
+
+                    return false;
             }
         }
     }

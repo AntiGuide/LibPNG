@@ -1,11 +1,9 @@
 using System;
-using System.Buffers.Binary;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using Ionic.Zlib;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
+using UnityEngine;
+using CompressionMode = System.IO.Compression.CompressionMode;
 
 namespace LibPNG {
     public enum ChunkType {
@@ -18,7 +16,7 @@ namespace LibPNG {
         zTXt,
         iTXt,
     }
-    
+
     public enum FilterType : byte {
         NONE = 0,
         SUB = 1,
@@ -26,88 +24,141 @@ namespace LibPNG {
         AVERAGE = 3,
         PAETH = 4,
     }
-    
+
     public static class Decoder {
-        public static Image<Rgba32> Decode(FileStream fileStream) {
-            var fileStreamLength = checked((int)fileStream.Length);
+        public static Texture2D Decode(Stream fileStream) {
+            var fileStreamLength = checked((int) fileStream.Length);
             var fileStreamBuffer = new byte[fileStreamLength];
-            var fileStreamBytesReadCount = fileStream.Read(fileStreamBuffer, 0, fileStreamLength);
-            
+            fileStream.Read(fileStreamBuffer, 0, 8);
+
             // This signature indicates that the remainder of the datastream contains a single PNG image, consisting of a series of chunks beginning with an IHDR chunk and ending with an IEND chunk.
-            var isPNG = fileStreamBuffer[0] == 137 &&
-                        fileStreamBuffer[1] == 80 &&
-                        fileStreamBuffer[2] == 78 &&
-                        fileStreamBuffer[3] == 71 &&
-                        fileStreamBuffer[4] == 13 &&
-                        fileStreamBuffer[5] == 10 &&
-                        fileStreamBuffer[6] == 26 &&
-                        fileStreamBuffer[7] == 10;
+            var isPNG = fileStreamBuffer[0] == 137 && fileStreamBuffer[1] == 80 && fileStreamBuffer[2] == 78 && fileStreamBuffer[3] == 71 && fileStreamBuffer[4] == 13 && fileStreamBuffer[5] == 10 && fileStreamBuffer[6] == 26 && fileStreamBuffer[7] == 10;
             Debug.Assert(isPNG, "This doesn't seem to be a PNG");
-            
-            var offset = 8;
             bool lastChunk;
             var metadata = new Metadata();
-            
+
             do {
-                var length = BinaryPrimitives.ReadUInt32BigEndian(new ReadOnlySpan<byte>(fileStreamBuffer, offset, 4));
-                var signedLength = checked((int)length);
-                offset += 4;
+                fileStreamBuffer = new byte[4];
+                fileStream.Read(fileStreamBuffer, 0, 4);
+                if (BitConverter.IsLittleEndian) Array.Reverse(fileStreamBuffer);
 
-                lastChunk = ChunkGenerator.GenerateChunk(new ReadOnlySpan<byte>(fileStreamBuffer, offset, 8 + signedLength), signedLength, metadata);
-                offset += 8 + signedLength;
+                var length = BitConverter.ToUInt32(fileStreamBuffer, 0);
+                var signedLength = checked((int) length);
+
+                lastChunk = ChunkGenerator.GenerateChunk(fileStream, signedLength, metadata);
             } while (!lastChunk);
-            
+
             var memoryStream = new MemoryStream(metadata.Data.ToArray());
-            using var zlibStream = new ZlibStream(memoryStream, CompressionMode.Decompress);
-            var buffer = new byte[64];
-            var uncompressedData = new byte[0];
-            while (zlibStream.Read(buffer, 0, 64) != 0) {
-                uncompressedData = uncompressedData.Concat(buffer).ToArray();
-            }
+            using (var zlibStream = new ZlibStream(memoryStream, Ionic.Zlib.CompressionMode.Decompress)) {
+                var buffer = new byte[4096];
+                var uncompressedData = new byte[0];
+                while (zlibStream.Read(buffer, 0, 4096) != 0) {
+                    uncompressedData = uncompressedData.Concat(buffer).ToArray();
+                }
 
-            Debug.Assert(uncompressedData.Length >= 1);
-            var bmp = new Image<Rgba32>(checked((int)metadata.Width), checked((int)metadata.Height));
+                Debug.Assert(uncompressedData.Length >= 1);
+                var bmp = new Texture2D(checked((int) metadata.Width), checked((int) metadata.Height));
 
-            for (var aktLine = 0; aktLine < metadata.Height; aktLine++) {
-                var filterTypeMarker = aktLine * (metadata.Width * 4 + 1);
-                Debug.Assert(uncompressedData[filterTypeMarker] <= 4);
-                switch ((FilterType)uncompressedData[filterTypeMarker]) {
-                    case FilterType.NONE:
-                        for (var i = 0; i < metadata.Width; i++) {
-                            bmp[i, aktLine] = new Rgba32(uncompressedData[filterTypeMarker+i*4+1], uncompressedData[filterTypeMarker+i*4+2], uncompressedData[filterTypeMarker+i*4+3], uncompressedData[filterTypeMarker+i*4+4]);
-                        }
+                int bytesPerPixel;
+                switch (metadata.ColourType) {
+                    case Metadata.ColourTypeEnum.GREYSCALE:
+                        bytesPerPixel = 1;
+                        throw new NotImplementedException();
+                    case Metadata.ColourTypeEnum.TRUECOLOUR:
+                        bytesPerPixel = 3;
                         break;
-                    case FilterType.SUB:
-                        for (var i = 0; i < metadata.Width; i++) {
-                            var col = new Rgba32(uncompressedData[filterTypeMarker+i*4+1], uncompressedData[filterTypeMarker+i*4+2], uncompressedData[filterTypeMarker+i*4+3], uncompressedData[filterTypeMarker+i*4+4]);
-                            var oldColor = i == 0 ? new Rgba32(0,0,0,0) : bmp[i - 1, aktLine];
-                            bmp[i, aktLine] = col.Add(oldColor);
-                        }
-                        break;
-                    case FilterType.UP:
-                        for (var i = 0; i < metadata.Width; i++) {
-                            var col = new Rgba32(uncompressedData[filterTypeMarker+i*4+1], uncompressedData[filterTypeMarker+i*4+2], uncompressedData[filterTypeMarker+i*4+3], uncompressedData[filterTypeMarker+i*4+4]);
-                            var oldColor = aktLine == 0 ? new Rgba32(0,0,0,0) : bmp[i, aktLine - 1];
-                            bmp[i, aktLine] = col.Add(oldColor);
-                        }
-                        break;
-                    case FilterType.AVERAGE:
-                        for (var i = 0; i < metadata.Width; i++) {
-                            var x = new Rgba32(uncompressedData[filterTypeMarker+i*4+1], uncompressedData[filterTypeMarker+i*4+2], uncompressedData[filterTypeMarker+i*4+3], uncompressedData[filterTypeMarker+i*4+4]);
-                            var a = i == 0 ? new Rgba32(0,0,0,0) : bmp[i - 1, aktLine];
-                            var b = aktLine == 0 ? new Rgba32(0,0,0,0) : bmp[i, aktLine - 1];
-                            bmp[i, aktLine] = x.Add(a.Average(b));
-                        }
-                        break;
-                    case FilterType.PAETH:
-                        throw new NotImplementedException($"{FilterType.PAETH} is not implemented at the moment");
+                    case Metadata.ColourTypeEnum.INDEXED_COLOUR:
+                        bytesPerPixel = 1;
+                        throw new NotImplementedException();
+                    case Metadata.ColourTypeEnum.GREYSCALE_WITH_ALPHA:
+                        bytesPerPixel = 2;
+                        throw new NotImplementedException();
+                    case Metadata.ColourTypeEnum.TRUECOLOUR_WITH_ALPHA:
+                        bytesPerPixel = 4;
                         break;
                     default:
                         throw new ArgumentOutOfRangeException();
                 }
-            }
+                
+                for (var aktLine = 0; aktLine < metadata.Height; aktLine++) {
+                    var filterTypeMarker = aktLine * (metadata.Width * bytesPerPixel + 1);
+                    Debug.Assert(uncompressedData[filterTypeMarker] <= 4);
+                    switch ((FilterType) uncompressedData[filterTypeMarker]) {
+                        case FilterType.NONE:
+                            for (var i = 0; i < metadata.Width; i++) {
+                                bmp.SetPixel(i, (int) metadata.Height - 1 - aktLine,new Color32(uncompressedData[filterTypeMarker + i * bytesPerPixel + 1], uncompressedData[filterTypeMarker + i * bytesPerPixel + 2], uncompressedData[filterTypeMarker + i * bytesPerPixel + 3], bytesPerPixel == 4 ? uncompressedData[filterTypeMarker + i * bytesPerPixel + 4] : byte.MaxValue));
+                            }
 
-            return bmp;
+                            break;
+                        case FilterType.SUB:
+                            for (var i = 0; i < metadata.Width; i++) {
+                                var col = new Color32(uncompressedData[filterTypeMarker + i * bytesPerPixel + 1], uncompressedData[filterTypeMarker + i * bytesPerPixel + 2], uncompressedData[filterTypeMarker + i * bytesPerPixel + 3], bytesPerPixel == 4 ? uncompressedData[filterTypeMarker + i * bytesPerPixel + 4] : byte.MinValue);
+                                var oldColor = i == 0 ? new Color32(0, 0, 0, (bytesPerPixel == 4 ? (byte) 0 : Byte.MaxValue)) : (Color32)bmp.GetPixel(i - 1, (int) metadata.Height - 1 - aktLine);
+
+                                var tmp = col.Add(oldColor);
+                                if (bytesPerPixel != 4) tmp.a = byte.MaxValue;
+                                bmp.SetPixel(i, (int) metadata.Height - 1 - aktLine, tmp);
+                            }
+
+                            break;
+                        case FilterType.UP:
+                            for (var i = 0; i < metadata.Width; i++) {
+                                var col = new Color32(uncompressedData[filterTypeMarker + i * bytesPerPixel + 1], uncompressedData[filterTypeMarker + i * bytesPerPixel + 2], uncompressedData[filterTypeMarker + i * bytesPerPixel + 3], bytesPerPixel == 4 ? uncompressedData[filterTypeMarker + i * bytesPerPixel + 4] : byte.MaxValue);
+                                var oldColor = aktLine == 0 ? new Color32(0, 0, 0, 0) : (Color32)bmp.GetPixel(i, (int) metadata.Height - 1 -  (aktLine - 1));
+                                var tmp = col.Add(oldColor);
+                                if (bytesPerPixel != 4) tmp.a = byte.MaxValue;
+                                bmp.SetPixel(i, (int) metadata.Height - 1 - aktLine, tmp);
+                            }
+
+                            break;
+                        case FilterType.AVERAGE:
+                            for (var i = 0; i < metadata.Width; i++) {
+                                var x = new Color32(uncompressedData[filterTypeMarker + i * bytesPerPixel + 1], uncompressedData[filterTypeMarker + i * bytesPerPixel + 2], uncompressedData[filterTypeMarker + i * bytesPerPixel + 3], bytesPerPixel == 4 ? uncompressedData[filterTypeMarker + i * bytesPerPixel + 4] : byte.MaxValue);
+                                var a = i == 0 ? new Color32(0, 0, 0, 0) : (Color32)bmp.GetPixel(i - 1, (int) metadata.Height - 1 - aktLine);
+                                var b = aktLine == 0 ? new Color32(0, 0, 0, 0) : (Color32)bmp.GetPixel(i, (int) metadata.Height - 1 -  (aktLine - 1));
+                                var tmp = x.Add(a.Average(b));
+                                if (bytesPerPixel != 4) tmp.a = byte.MaxValue;
+                                bmp.SetPixel(i, (int) metadata.Height - 1 - aktLine, tmp);
+                            }
+
+                            break;
+                        case FilterType.PAETH:
+                            // TODO Better architecture. Operate on a byte basis
+                            for (var i = 0; i < metadata.Width; i++) {
+                                var col = new Color32();
+                                for (var k = 0; k < bytesPerPixel; k++) {
+                                    var x = uncompressedData[filterTypeMarker + i * bytesPerPixel + k + 1];
+                                    var a = i == 0 ? (byte) 0 : ((Color32) bmp.GetPixel(i - 1, (int) metadata.Height - 1 - aktLine))[k];
+                                    var b = aktLine == 0 ? (byte) 0 : ((Color32)bmp.GetPixel(i, (int) metadata.Height - 1 -  (aktLine - 1)))[k];
+                                    var c = aktLine == 0 || i == 0 ? (byte) 0 : ((Color32)bmp.GetPixel(i - 1, (int) metadata.Height - 1 -  (aktLine - 1)))[k];
+                                    
+                                    var p = a + b - c;
+                                    var pa = Rgba32Extension.Abs(p - a);
+                                    var pb = Rgba32Extension.Abs(p - b);
+                                    var pc = Rgba32Extension.Abs(p - c);
+
+                                    if (pa <= pb && pa <= pc) {
+                                        col[k] = (byte)(x + a);
+                                    } else if (pb <= pc) {
+                                        col[k] = (byte)(x + b);
+                                    }else {
+                                        col[k] = (byte)(x + c);
+                                    }
+                                }
+
+                                if (bytesPerPixel != 4) col.a = byte.MaxValue;
+                                bmp.SetPixel(i, (int) metadata.Height - 1 - aktLine, col);
+                            }
+                            
+                            break;
+                        default:
+                            throw new ArgumentOutOfRangeException($"Unknown: {uncompressedData[filterTypeMarker]}");
+                    }
+                }
+                
+                bmp.Apply();
+                return bmp;
+            }
         }
     }
 }

@@ -2,7 +2,7 @@ using System;
 
 namespace LibPNG {
     public class PLTE {
-        public static void Read(in ReadOnlySpan<byte> chunkData, Metadata metadata) {
+        public static void Read(in byte[] chunkData, Metadata metadata) {
             throw new NotImplementedException();
         }
     }

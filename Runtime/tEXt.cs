@@ -6,7 +6,7 @@ namespace LibPNG {
     /// This is standard text
     /// </summary>
     public static class tEXt {
-        public static void Read(in ReadOnlySpan<byte> chunkData, Metadata metadata) {
+        public static void Read(in byte[] chunkData, Metadata metadata) {
             var sb = new StringBuilder();
             var position = 0;
             while (chunkData[position] != 0) {
@@ -16,8 +16,10 @@ namespace LibPNG {
             
             var keyword = sb.ToString();
             position++;
-
-            var text = System.Text.Encoding.GetEncoding("iso-8859-1").GetString(chunkData.Slice(position));
+            
+            var subArray = new byte[4];
+            Array.Copy(chunkData, position, subArray, 0, chunkData.Length - position);
+            var text = System.Text.Encoding.GetEncoding("iso-8859-1").GetString(subArray);
         }
     }
 }

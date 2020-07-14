@@ -1,4 +1,4 @@
-using System;
+using System.Collections.Generic;
 
 namespace LibPNG {
     public static class CRC32 {
@@ -20,7 +20,7 @@ namespace LibPNG {
             }
         }
 
-        public static uint Calculate(in ReadOnlySpan<byte> data) {
+        public static uint Calculate(in IEnumerable<byte> data) {
             var crc = 0xFFFFFFFF;
             if (data == null) return crc ^ 0xFFFFFFFF;
             

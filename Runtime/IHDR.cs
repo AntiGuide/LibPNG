@@ -1,14 +1,21 @@
 using System;
-using System.Buffers.Binary;
 using System.Diagnostics;
 
 namespace LibPNG {
     public static class IHDR {
-        public static void Read(in ReadOnlySpan<byte> chunkData, Metadata metadata) {
-            metadata.Width = BinaryPrimitives.ReadUInt32BigEndian(chunkData.Slice(0, 4)); // Width of the image in pixels
+        public static void Read(in byte[] chunkData, Metadata metadata) {
+            var subArray = new byte[4];
+            Array.Copy(chunkData, 0, subArray, 0, 4);
+            if (BitConverter.IsLittleEndian) Array.Reverse(subArray);
+            
+            metadata.Width = BitConverter.ToUInt32(subArray, 0); // Width of the image in pixels
             if (metadata.Width == 0) throw new Exception($"{nameof(metadata.Width)} may not be 0");
             
-            metadata.Height = BinaryPrimitives.ReadUInt32BigEndian(chunkData.Slice(4, 4)); // Height of the image in pixels
+            subArray = new byte[4];
+            Array.Copy(chunkData, 4, subArray, 0, 4);
+            if (BitConverter.IsLittleEndian) Array.Reverse(subArray);
+            
+            metadata.Height = BitConverter.ToUInt32(subArray, 0); // Height of the image in pixels
             if (metadata.Height == 0) throw new Exception($"{nameof(metadata.Height)} may not be 0");
             
             metadata.BitDepth = chunkData[8]; // number of bits per sample or per palette index (not per pixel)
@@ -58,6 +65,8 @@ namespace LibPNG {
             var interlaceMethod = chunkData[12];
             Debug.Assert(interlaceMethod == (int) Metadata.InterlaceMethodEnum.NO_INTERLACE || interlaceMethod == (int) Metadata.InterlaceMethodEnum.ADAM7_INTERLACE, $"{nameof(interlaceMethod)} may only be {Metadata.InterlaceMethodEnum.NO_INTERLACE} or {Metadata.InterlaceMethodEnum.ADAM7_INTERLACE} but was {interlaceMethod}");
             metadata.InterlaceMethod = (Metadata.InterlaceMethodEnum) interlaceMethod;
+
+            if (metadata.InterlaceMethod != Metadata.InterlaceMethodEnum.NO_INTERLACE) throw new NotImplementedException();
         }
     }
 }
