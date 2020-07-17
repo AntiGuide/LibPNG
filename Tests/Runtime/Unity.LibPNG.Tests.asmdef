@@ -3,7 +3,8 @@
     "references": [
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner",
-        "Unity.LibPNG"
+        "Unity.LibPNG",
+        "UniTask"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

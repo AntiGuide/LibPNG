@@ -1,9 +1,10 @@
 using System;
+using System.Collections;
 using System.IO;
 using System.Linq;
+using Cysharp.Threading.Tasks;
 using Ionic.Zlib;
 using UnityEngine;
-using UnityEngine.Profiling;
 
 namespace LibPNG {
     public enum ChunkType {
@@ -26,9 +27,20 @@ namespace LibPNG {
         private static readonly byte[] pngSignature = { 137, 80, 78, 71, 13, 10, 26, 10 };
         private static long posR;
 
-        public static bool Decode(this Texture2D tex, Stream fileStream) {
-            Profiler.BeginSample("Decode");
-            
+        public static IEnumerator LoadImageAsync(this Texture2D tex, Stream fileStream) {
+            yield return LoadImageAsyncTask(fileStream).ToCoroutine(tuple => {
+                var (data, width, height) = tuple;
+                tex.Resize(width, height, TextureFormat.RGBA32, false);
+                tex.LoadRawTextureData(data);
+                tex.Apply();
+            });
+        }
+
+        private static async UniTask<(byte[], int, int)> LoadImageAsyncTask(Stream fileStream) {
+            return await UniTask.Run(() => LoadImageInternal(fileStream));
+        }
+
+        private static (byte[], int, int) LoadImageInternal(Stream fileStream) {
             var fileStreamBuffer = new byte[8];
             fileStream.Read(fileStreamBuffer, 0, 8);
 
@@ -36,7 +48,7 @@ namespace LibPNG {
             Debug.Assert(fileStreamBuffer.SequenceEqual(pngSignature), "This doesn't seem to be a PNG");
             bool lastChunk;
             var metadata = new Metadata(checked((int) fileStream.Length));
-
+            
             do {
                 fileStreamBuffer = new byte[4];
                 fileStream.Read(fileStreamBuffer, 0, 4);
@@ -50,80 +62,82 @@ namespace LibPNG {
 
             var tmpScanlineColor = new Color32[metadata.Width];
             
-            //var memoryStream = new MemoryStream(metadata.Data.ToArray());
-            //using (var zlibStream = new ZlibStream(memoryStream, Ionic.Zlib.CompressionMode.Decompress)) {
             metadata.DataStream.Position = 0;
+            byte[] uncompressedData;
+            
             using (var zlibStream = new ZlibStream(metadata.DataStream, Ionic.Zlib.CompressionMode.Decompress)) {
-                var buffer = new byte[zlibStream.BufferSize];
-                var uncompressedData = new byte[0];
-                while (zlibStream.Read(buffer, 0, zlibStream.BufferSize) != 0) {
-                    uncompressedData = uncompressedData.Concat(buffer).ToArray();
+                using (var memoryStream = new MemoryStream()) {
+                    zlibStream.CopyTo(memoryStream);
+                    uncompressedData = memoryStream.ToArray();
                 }
+            }
+            
+            Debug.Assert(uncompressedData.Length >= 1);
 
-                Debug.Assert(uncompressedData.Length >= 1);
-                tex.Resize(checked((int) metadata.Width), checked((int) metadata.Height));
-
-                uint bytesPerPixel;
-                switch (metadata.ColourType) {
-                    case Metadata.ColourTypeEnum.GREYSCALE:
-                        bytesPerPixel = 1;
-                        throw new NotImplementedException();
-                    case Metadata.ColourTypeEnum.TRUECOLOUR:
-                        bytesPerPixel = 3;
+            uint bytesPerPixel;
+            switch (metadata.ColourType) {
+                case Metadata.ColourTypeEnum.GREYSCALE:
+                    bytesPerPixel = 1;
+                    throw new NotImplementedException();
+                case Metadata.ColourTypeEnum.TRUECOLOUR:
+                    bytesPerPixel = 3;
+                    break;
+                case Metadata.ColourTypeEnum.INDEXED_COLOUR:
+                    bytesPerPixel = 1;
+                    throw new NotImplementedException();
+                case Metadata.ColourTypeEnum.GREYSCALE_WITH_ALPHA:
+                    bytesPerPixel = 2;
+                    throw new NotImplementedException();
+                case Metadata.ColourTypeEnum.TRUECOLOUR_WITH_ALPHA:
+                    bytesPerPixel = 4;
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException();
+            }
+            
+            var rawTextureData = new byte[checked((int) metadata.Width) * checked((int) metadata.Height) * 4];
+            
+            for (uint aktLine = 0; aktLine < metadata.Height; aktLine++) {
+                var firstRowBytePosition = aktLine * (metadata.Width * bytesPerPixel + 1);
+                Color32[] lineColors = null;
+                switch ((FilterType) uncompressedData[firstRowBytePosition]) {
+                    case FilterType.NONE:
+                        FilterLineNone(uncompressedData, firstRowBytePosition, metadata.Width, bytesPerPixel, ref tmpScanlineColor);
                         break;
-                    case Metadata.ColourTypeEnum.INDEXED_COLOUR:
-                        bytesPerPixel = 1;
-                        throw new NotImplementedException();
-                    case Metadata.ColourTypeEnum.GREYSCALE_WITH_ALPHA:
-                        bytesPerPixel = 2;
-                        throw new NotImplementedException();
-                    case Metadata.ColourTypeEnum.TRUECOLOUR_WITH_ALPHA:
-                        bytesPerPixel = 4;
+                    case FilterType.SUB:
+                        FilterLineSub(uncompressedData, firstRowBytePosition, metadata.Width, bytesPerPixel, ref tmpScanlineColor);
+                        lineColors = tmpScanlineColor;
+                        break;
+                    case FilterType.UP:
+                        FilterLineUp(uncompressedData, firstRowBytePosition, metadata.Width, bytesPerPixel, ref tmpScanlineColor);
+                        lineColors = tmpScanlineColor;
+                        break;
+                    case FilterType.AVERAGE:
+                        FilterLineAverage(uncompressedData, firstRowBytePosition, metadata.Width, bytesPerPixel, ref tmpScanlineColor);
+                        lineColors = tmpScanlineColor;
+                        break;
+                    case FilterType.PAETH:
+                        FilterLinePaeth(uncompressedData, firstRowBytePosition, metadata.Width, bytesPerPixel, ref tmpScanlineColor);
+                        lineColors = tmpScanlineColor;
                         break;
                     default:
                         throw new ArgumentOutOfRangeException();
                 }
                 
-                Profiler.EndSample();
-                Profiler.BeginSample("Filtering1");
-                
-                for (uint aktLine = 0; aktLine < metadata.Height; aktLine++) {
-                    var firstRowBytePosition = aktLine * (metadata.Width * bytesPerPixel + 1);
-                    Color32[] lineColors = null;
-                    switch ((FilterType) uncompressedData[firstRowBytePosition]) {
-                        case FilterType.NONE:
-                            FilterLineNone(uncompressedData, firstRowBytePosition, metadata.Width, bytesPerPixel, ref tmpScanlineColor);
-                            break;
-                        case FilterType.SUB:
-                            FilterLineSub(uncompressedData, firstRowBytePosition, metadata.Width, bytesPerPixel, ref tmpScanlineColor);
-                            lineColors = tmpScanlineColor;
-                            break;
-                        case FilterType.UP:
-                            FilterLineUp(uncompressedData, firstRowBytePosition, metadata.Width, bytesPerPixel, ref tmpScanlineColor);
-                            lineColors = tmpScanlineColor;
-                            break;
-                        case FilterType.AVERAGE:
-                            FilterLineAverage(uncompressedData, firstRowBytePosition, metadata.Width, bytesPerPixel, ref tmpScanlineColor);
-                            lineColors = tmpScanlineColor;
-                            break;
-                        case FilterType.PAETH:
-                            FilterLinePaeth(uncompressedData, firstRowBytePosition, metadata.Width, bytesPerPixel, ref tmpScanlineColor);
-                            lineColors = tmpScanlineColor;
-                            break;
-                        default:
-                            throw new ArgumentOutOfRangeException();
+                Debug.Assert(lineColors != null);
+                if (bytesPerPixel == 4) {
+                    Array.Copy(uncompressedData, firstRowBytePosition + 1, rawTextureData, checked((int)(metadata.Width * bytesPerPixel * aktLine)), metadata.Width * bytesPerPixel);
+                } else {
+                    for (var i = 0; i < lineColors.Length; i++) {
+                        rawTextureData[(metadata.Height - 1 - aktLine) * metadata.Width * 4 + i * 4] = lineColors[i].r;
+                        rawTextureData[(metadata.Height - 1 - aktLine) * metadata.Width * 4 + i * 4 + 1] = lineColors[i].g;
+                        rawTextureData[(metadata.Height - 1 - aktLine) * metadata.Width * 4 + i * 4 + 2] = lineColors[i].b;
+                        rawTextureData[(metadata.Height - 1 - aktLine) * metadata.Width * 4 + i * 4 + 3] = byte.MaxValue;
                     }
-                    
-                    Debug.Assert(lineColors != null);
-                    tex.SetPixels32(0, checked((int)(metadata.Height - 1 - aktLine)), checked((int)metadata.Width), 1, lineColors);
                 }
-
-                Profiler.EndSample();
-                Profiler.BeginSample("Applying");
-                tex.Apply();
-                Profiler.EndSample();
-                return true;
             }
+            
+            return (rawTextureData, checked((int) metadata.Width), checked((int) metadata.Height));
         }
 
         private static void FilterLineNone(in byte[] data, uint offset, uint width, uint bpp, ref Color32[] tmpScanlineColor) {

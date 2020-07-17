@@ -1,7 +1,8 @@
 {
     "name": "Unity.LibPNG",
     "references": [
-        "GUID:2346c8736372f684eb3e4829f920b7f2"
+        "GUID:2346c8736372f684eb3e4829f920b7f2",
+        "GUID:f51ebe6a0ceec4240a699833d6309b23"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
