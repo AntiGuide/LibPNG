@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+using System.IO;
 
 namespace LibPNG {
     public class Metadata {
@@ -7,10 +7,8 @@ namespace LibPNG {
         public byte BitDepth;
         public ColourTypeEnum ColourType;
         public InterlaceMethodEnum InterlaceMethod;
-        public byte SampleDepth;
-        public List<PLTE> PlteChunks = new List<PLTE>();
-        public List<byte> Data = new List<byte>();
-        
+        public readonly MemoryStream DataStream;
+
         public enum ColourTypeEnum : byte {
             GREYSCALE = 0,
             TRUECOLOUR = 2,
@@ -22,6 +20,10 @@ namespace LibPNG {
         public enum InterlaceMethodEnum : byte {
             NO_INTERLACE = 0,
             ADAM7_INTERLACE = 1,
+        }
+
+        public Metadata(int dataStreamCapacity) {
+            DataStream = new MemoryStream(dataStreamCapacity);
         }
     }
 }
