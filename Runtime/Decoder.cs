@@ -24,6 +24,7 @@ namespace LibPNG {
 
     public static class Decoder {
         private static readonly byte[] pngSignature = { 137, 80, 78, 71, 13, 10, 26, 10 };
+        private static long posR;
 
         public static bool Decode(this Texture2D tex, Stream fileStream) {
             Profiler.BeginSample("Decode");
@@ -47,6 +48,8 @@ namespace LibPNG {
                 lastChunk = ChunkGenerator.GenerateChunk(fileStream, signedLength, metadata);
             } while (!lastChunk);
 
+            var tmpScanlineColor = new Color32[metadata.Width];
+            
             //var memoryStream = new MemoryStream(metadata.Data.ToArray());
             //using (var zlibStream = new ZlibStream(memoryStream, Ionic.Zlib.CompressionMode.Decompress)) {
             metadata.DataStream.Position = 0;
@@ -60,7 +63,7 @@ namespace LibPNG {
                 Debug.Assert(uncompressedData.Length >= 1);
                 tex.Resize(checked((int) metadata.Width), checked((int) metadata.Height));
 
-                int bytesPerPixel;
+                uint bytesPerPixel;
                 switch (metadata.ColourType) {
                     case Metadata.ColourTypeEnum.GREYSCALE:
                         bytesPerPixel = 1;
@@ -82,88 +85,119 @@ namespace LibPNG {
                 }
                 
                 Profiler.EndSample();
-                Profiler.BeginSample("Filtering");
-                for (var aktLine = 0; aktLine < metadata.Height; aktLine++) {
-                    var filterTypeMarker = aktLine * (metadata.Width * bytesPerPixel + 1);
-                    Debug.Assert(uncompressedData[filterTypeMarker] <= 4);
-                    switch ((FilterType) uncompressedData[filterTypeMarker]) {
+                Profiler.BeginSample("Filtering1");
+                
+                for (uint aktLine = 0; aktLine < metadata.Height; aktLine++) {
+                    var firstRowBytePosition = aktLine * (metadata.Width * bytesPerPixel + 1);
+                    Color32[] lineColors = null;
+                    switch ((FilterType) uncompressedData[firstRowBytePosition]) {
                         case FilterType.NONE:
-                            for (var i = 0; i < metadata.Width; i++) {
-                                tex.SetPixel(i, (int) metadata.Height - 1 - aktLine,new Color32(uncompressedData[filterTypeMarker + i * bytesPerPixel + 1], uncompressedData[filterTypeMarker + i * bytesPerPixel + 2], uncompressedData[filterTypeMarker + i * bytesPerPixel + 3], bytesPerPixel == 4 ? uncompressedData[filterTypeMarker + i * bytesPerPixel + 4] : byte.MaxValue));
-                            }
-
+                            FilterLineNone(uncompressedData, firstRowBytePosition, metadata.Width, bytesPerPixel, ref tmpScanlineColor);
                             break;
                         case FilterType.SUB:
-                            for (var i = 0; i < metadata.Width; i++) {
-                                var col = new Color32(uncompressedData[filterTypeMarker + i * bytesPerPixel + 1], uncompressedData[filterTypeMarker + i * bytesPerPixel + 2], uncompressedData[filterTypeMarker + i * bytesPerPixel + 3], bytesPerPixel == 4 ? uncompressedData[filterTypeMarker + i * bytesPerPixel + 4] : byte.MinValue);
-                                var oldColor = i == 0 ? new Color32(0, 0, 0, (bytesPerPixel == 4 ? (byte) 0 : Byte.MaxValue)) : (Color32)tex.GetPixel(i - 1, (int) metadata.Height - 1 - aktLine);
-
-                                var tmp = col.Add(oldColor);
-                                if (bytesPerPixel != 4) tmp.a = byte.MaxValue;
-                                tex.SetPixel(i, (int) metadata.Height - 1 - aktLine, tmp);
-                            }
-
+                            FilterLineSub(uncompressedData, firstRowBytePosition, metadata.Width, bytesPerPixel, ref tmpScanlineColor);
+                            lineColors = tmpScanlineColor;
                             break;
                         case FilterType.UP:
-                            for (var i = 0; i < metadata.Width; i++) {
-                                var col = new Color32(uncompressedData[filterTypeMarker + i * bytesPerPixel + 1], uncompressedData[filterTypeMarker + i * bytesPerPixel + 2], uncompressedData[filterTypeMarker + i * bytesPerPixel + 3], bytesPerPixel == 4 ? uncompressedData[filterTypeMarker + i * bytesPerPixel + 4] : byte.MaxValue);
-                                var oldColor = aktLine == 0 ? new Color32(0, 0, 0, 0) : (Color32)tex.GetPixel(i, (int) metadata.Height - 1 -  (aktLine - 1));
-                                var tmp = col.Add(oldColor);
-                                if (bytesPerPixel != 4) tmp.a = byte.MaxValue;
-                                tex.SetPixel(i, (int) metadata.Height - 1 - aktLine, tmp);
-                            }
-
+                            FilterLineUp(uncompressedData, firstRowBytePosition, metadata.Width, bytesPerPixel, ref tmpScanlineColor);
+                            lineColors = tmpScanlineColor;
                             break;
                         case FilterType.AVERAGE:
-                            for (var i = 0; i < metadata.Width; i++) {
-                                var x = new Color32(uncompressedData[filterTypeMarker + i * bytesPerPixel + 1], uncompressedData[filterTypeMarker + i * bytesPerPixel + 2], uncompressedData[filterTypeMarker + i * bytesPerPixel + 3], bytesPerPixel == 4 ? uncompressedData[filterTypeMarker + i * bytesPerPixel + 4] : byte.MaxValue);
-                                var a = i == 0 ? new Color32(0, 0, 0, 0) : (Color32)tex.GetPixel(i - 1, (int) metadata.Height - 1 - aktLine);
-                                var b = aktLine == 0 ? new Color32(0, 0, 0, 0) : (Color32)tex.GetPixel(i, (int) metadata.Height - 1 -  (aktLine - 1));
-                                var tmp = x.Add(a.Average(b));
-                                if (bytesPerPixel != 4) tmp.a = byte.MaxValue;
-                                tex.SetPixel(i, (int) metadata.Height - 1 - aktLine, tmp);
-                            }
-
+                            FilterLineAverage(uncompressedData, firstRowBytePosition, metadata.Width, bytesPerPixel, ref tmpScanlineColor);
+                            lineColors = tmpScanlineColor;
                             break;
                         case FilterType.PAETH:
-                            // TODO Better architecture. Operate on a byte basis
-                            for (var i = 0; i < metadata.Width; i++) {
-                                var col = new Color32();
-                                for (var k = 0; k < bytesPerPixel; k++) {
-                                    var x = uncompressedData[filterTypeMarker + i * bytesPerPixel + k + 1];
-                                    var a = i == 0 ? (byte) 0 : ((Color32) tex.GetPixel(i - 1, (int) metadata.Height - 1 - aktLine))[k];
-                                    var b = aktLine == 0 ? (byte) 0 : ((Color32)tex.GetPixel(i, (int) metadata.Height - 1 -  (aktLine - 1)))[k];
-                                    var c = aktLine == 0 || i == 0 ? (byte) 0 : ((Color32)tex.GetPixel(i - 1, (int) metadata.Height - 1 -  (aktLine - 1)))[k];
-                                    
-                                    var p = a + b - c;
-                                    var pa = Rgba32Extension.Abs(p - a);
-                                    var pb = Rgba32Extension.Abs(p - b);
-                                    var pc = Rgba32Extension.Abs(p - c);
-
-                                    if (pa <= pb && pa <= pc) {
-                                        col[k] = (byte)(x + a);
-                                    } else if (pb <= pc) {
-                                        col[k] = (byte)(x + b);
-                                    }else {
-                                        col[k] = (byte)(x + c);
-                                    }
-                                }
-
-                                if (bytesPerPixel != 4) col.a = byte.MaxValue;
-                                tex.SetPixel(i, (int) metadata.Height - 1 - aktLine, col);
-                            }
-                            
+                            FilterLinePaeth(uncompressedData, firstRowBytePosition, metadata.Width, bytesPerPixel, ref tmpScanlineColor);
+                            lineColors = tmpScanlineColor;
                             break;
                         default:
-                            throw new ArgumentOutOfRangeException($"Unknown: {uncompressedData[filterTypeMarker]}");
+                            throw new ArgumentOutOfRangeException();
                     }
+                    
+                    Debug.Assert(lineColors != null);
+                    tex.SetPixels32(0, checked((int)(metadata.Height - 1 - aktLine)), checked((int)metadata.Width), 1, lineColors);
                 }
-                
+
                 Profiler.EndSample();
                 Profiler.BeginSample("Applying");
                 tex.Apply();
                 Profiler.EndSample();
                 return true;
+            }
+        }
+
+        private static void FilterLineNone(in byte[] data, uint offset, uint width, uint bpp, ref Color32[] tmpScanlineColor) {
+            for (var position = 0; position < width; position++) {
+                posR = offset + 1 + position * bpp;
+                tmpScanlineColor[position] = new Color32(data[posR], data[posR + 1], data[posR + 2], bpp == 4 ? data[posR + 3] : byte.MaxValue);
+            }
+        }
+        
+        private static void FilterLineSub(in byte[] data, uint offset, uint width, uint bpp, ref Color32[] tmpScanlineColor) {
+            for (var position = offset + 1; position <= width * bpp + offset; position++) {
+                var left = position - offset > bpp ? data[position - bpp] : 0;
+                data[position] = (byte) (data[position] + left);
+                if ((position - offset) % bpp != 0 || position == offset + 1) continue;
+                
+                var posR = position - bpp + 1;
+                tmpScanlineColor[(posR - offset - 1) / bpp] = new Color32(data[posR], data[posR + 1], data[posR + 2], bpp == 4 ? data[posR + 3] : byte.MaxValue);
+            }
+        }
+        
+        private static void FilterLineUp(in byte[] data, uint offset, uint width, uint bpp, ref Color32[] tmpScanlineColor) {
+            for (var position = offset + 1; position <= width * bpp + offset; position++) {
+                var current = data[position];
+                var back = width * bpp + 1;
+                var above = position > back ? data[position - back] : 0;
+                data[position] = (byte) (current + above);
+                if ((position - offset) % bpp != 0 || position == offset + 1) continue;
+                
+                var posR = position - bpp + 1;
+                tmpScanlineColor[(posR - offset - 1) / bpp] = new Color32(data[posR], data[posR + 1], data[posR + 2], bpp == 4 ? data[posR + 3] : byte.MaxValue);
+            }
+        }
+        
+        private static void FilterLineAverage(in byte[] data, uint offset, uint width, uint bpp, ref Color32[] tmpScanlineColor) {
+            for (var position = offset + 1; position <= width * bpp + offset; position++) {
+                var current = data[position];
+                var left = position - offset > bpp ? data[position - bpp] : 0;
+                var back = width * bpp + 1;
+                var above = position > back ? data[position - back] : 0;
+                data[position] = (byte) (current + (byte) ((left + above) / 2));
+                if ((position - offset) % bpp != 0 || position == offset + 1) continue;
+                
+                var posR = position - bpp + 1;
+                tmpScanlineColor[(posR - offset - 1) / bpp] = new Color32(data[posR], data[posR + 1], data[posR + 2], bpp == 4 ? data[posR + 3] : byte.MaxValue);
+            }
+        }
+        
+        private static void FilterLinePaeth(in byte[] data, uint offset, uint width, uint bpp, ref Color32[] tmpScanlineColor) {
+            for (var position = offset + 1; position <= width * bpp + offset; position++) {
+                var current = data[position];
+                var left = position - offset > bpp ? data[position - bpp] : 0;
+                var back = width * bpp + 1;
+                var above = position > back ? data[position - back] : 0;
+                //back += bpp;
+                var aboveleft = position - offset > bpp ? data[position - back - bpp] : 0;
+                int tmp;
+                tmp = above - aboveleft;
+                var pa = -tmp > tmp ? -tmp : tmp;
+                tmp = left - aboveleft;
+                var pb = -tmp > tmp ? -tmp : tmp;
+                tmp = left + above - aboveleft - aboveleft;
+                var pc = -tmp > tmp ? -tmp : tmp;
+                if (pa <= pb && pa <= pc) {
+                    data[position] = (byte)(current + left);
+                } else if (pb <= pc) {
+                    data[position] = (byte)(current + above);
+                }else {
+                    data[position] = (byte)(current + aboveleft);
+                }
+                
+                if ((position - offset) % bpp != 0 || position == offset + 1) continue;
+                
+                var posR = position - bpp + 1;
+                tmpScanlineColor[(posR - offset - 1) / bpp] = new Color32(data[posR], data[posR + 1], data[posR + 2], bpp == 4 ? data[posR + 3] : byte.MaxValue);
             }
         }
     }
