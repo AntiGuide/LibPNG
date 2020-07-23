@@ -5,7 +5,6 @@ using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
 using UnityEngine;
-using UnityEngine.Profiling;
 
 namespace LibPNG {
     public enum ChunkType {
@@ -51,7 +50,7 @@ namespace LibPNG {
                 offset += 12 + signedLength;
             } while (!lastChunk);
 
-            var tmpScanlineColor = new Color32[metadata.Width];
+            //var tmpScanlineColor = new Color32[metadata.Width];
             
             NativeArray<byte> uncompressedData;
             
@@ -93,101 +92,66 @@ namespace LibPNG {
             
             for (var aktLine = 0; aktLine < metadata.Height; aktLine++) {
                 var firstRowBytePosition = aktLine * (Width[0] * bytesPerPixel + 1);
-                Color32[] lineColors = null;
+                //Color32[] lineColors = null;
                 switch ((FilterType) uncompressedData[firstRowBytePosition]) {
                     case FilterType.NONE:
-                        FilterLineNone(uncompressedData, firstRowBytePosition, Width[0], bytesPerPixel, ref tmpScanlineColor);
                         break;
                     case FilterType.SUB:
-                        FilterLineSub(ref uncompressedData, firstRowBytePosition, Width[0], bytesPerPixel, ref tmpScanlineColor);
-                        lineColors = tmpScanlineColor;
+                        FilterLineSub(ref uncompressedData, firstRowBytePosition, Width[0], bytesPerPixel);
                         break;
                     case FilterType.UP:
-                        FilterLineUp(ref uncompressedData, firstRowBytePosition, Width[0], bytesPerPixel, ref tmpScanlineColor);
-                        lineColors = tmpScanlineColor;
+                        FilterLineUp(ref uncompressedData, firstRowBytePosition, Width[0], bytesPerPixel);
                         break;
                     case FilterType.AVERAGE:
-                        FilterLineAverage(ref uncompressedData, firstRowBytePosition, Width[0], bytesPerPixel, ref tmpScanlineColor);
-                        lineColors = tmpScanlineColor;
+                        FilterLineAverage(ref uncompressedData, firstRowBytePosition, Width[0], bytesPerPixel);
                         break;
                     case FilterType.PAETH:
-                        FilterLinePaeth(ref uncompressedData, firstRowBytePosition, Width[0], bytesPerPixel, ref tmpScanlineColor);
-                        lineColors = tmpScanlineColor;
+                        FilterLinePaeth(ref uncompressedData, firstRowBytePosition, Width[0], bytesPerPixel);
                         break;
                     default:
                         throw new ArgumentOutOfRangeException();
                 }
                 
-                Debug.Assert(lineColors != null);
-                if (bytesPerPixel == 4) {
-                    for (var i = 0; i < lineColors.Length; i++) {
-                        RawTextureData[(int)((metadata.Height - 1 - aktLine) * metadata.Width * 4 + i * 4)] = lineColors[i].r;
-                        RawTextureData[(int)((metadata.Height - 1 - aktLine) * metadata.Width * 4 + i * 4 + 1)] = lineColors[i].g;
-                        RawTextureData[(int)((metadata.Height - 1 - aktLine) * metadata.Width * 4 + i * 4 + 2)] = lineColors[i].b;
-                        RawTextureData[(int)((metadata.Height - 1 - aktLine) * metadata.Width * 4 + i * 4 + 3)] = lineColors[i].a;
-                    }
-                } else {
-                    for (var i = 0; i < lineColors.Length; i++) {
-                        RawTextureData[(int)((metadata.Height - 1 - aktLine) * metadata.Width * 4 + i * 4)] = lineColors[i].r;
-                        RawTextureData[(int)((metadata.Height - 1 - aktLine) * metadata.Width * 4 + i * 4 + 1)] = lineColors[i].g;
-                        RawTextureData[(int)((metadata.Height - 1 - aktLine) * metadata.Width * 4 + i * 4 + 2)] = lineColors[i].b;
-                        RawTextureData[(int)((metadata.Height - 1 - aktLine) * metadata.Width * 4 + i * 4 + 3)] = byte.MaxValue;
-                    }
+                for (var i = 0; i < Width[0]; i++) {
+                    RawTextureData[(int)((metadata.Height - 1 - aktLine) * metadata.Width * 4 + i * 4)] = uncompressedData[firstRowBytePosition + 1 + i * bytesPerPixel];
+                    RawTextureData[(int)((metadata.Height - 1 - aktLine) * metadata.Width * 4 + i * 4 + 1)] = uncompressedData[firstRowBytePosition + 2 + i * bytesPerPixel];
+                    RawTextureData[(int)((metadata.Height - 1 - aktLine) * metadata.Width * 4 + i * 4 + 2)] = uncompressedData[firstRowBytePosition + 3 + i * bytesPerPixel];
+                    RawTextureData[(int)((metadata.Height - 1 - aktLine) * metadata.Width * 4 + i * 4 + 3)] = bytesPerPixel == 4 ? uncompressedData[firstRowBytePosition + 4 + i * bytesPerPixel] : byte.MaxValue;
                 }
             }
         }
-        
+
         [BurstCompile]
-        private void FilterLineNone(in NativeArray<byte> data, int offset, int width, int bpp, ref Color32[] tmpScanlineColor) {
-            for (var position = 0; position < width; position++) {
-                posR = offset + 1 + position * bpp;
-                tmpScanlineColor[position] = new Color32(data[posR], data[posR + 1], data[posR + 2], bpp == 4 ? data[posR + 3] : byte.MaxValue);
-            }
-        }
-        
-        [BurstCompile]
-        private void FilterLineSub(ref NativeArray<byte> data, int offset, int width, int bpp, ref Color32[] tmpScanlineColor) {
+        private void FilterLineSub(ref NativeArray<byte> data, int offset, int width, int bpp) {
             for (var position = offset + 1; position <= width * bpp + offset; position++) {
                 var left = position - offset > bpp ? data[position - bpp] : 0;
                 data[position] = (byte) (data[position] + left);
-                if ((position - offset) % bpp != 0 || position == offset + 1) continue;
-                
-                var posR = position - bpp + 1;
-                tmpScanlineColor[(posR - offset - 1) / bpp] = new Color32(data[posR], data[posR + 1], data[posR + 2], bpp == 4 ? data[posR + 3] : byte.MaxValue);
             }
         }
         
         [BurstCompile]
-        private void FilterLineUp(ref NativeArray<byte> data, int offset, int width, int bpp, ref Color32[] tmpScanlineColor) {
+        private void FilterLineUp(ref NativeArray<byte> data, int offset, int width, int bpp) {
             for (var position = offset + 1; position <= width * bpp + offset; position++) {
                 var current = data[position];
                 var back = width * bpp + 1;
                 var above = position > back ? data[position - back] : 0;
                 data[position] = (byte) (current + above);
-                if ((position - offset) % bpp != 0 || position == offset + 1) continue;
-                
-                var posR = position - bpp + 1;
-                tmpScanlineColor[(posR - offset - 1) / bpp] = new Color32(data[posR], data[posR + 1], data[posR + 2], bpp == 4 ? data[posR + 3] : byte.MaxValue);
             }
         }
         
         [BurstCompile]
-        private void FilterLineAverage(ref NativeArray<byte> data, int offset, int width, int bpp, ref Color32[] tmpScanlineColor) {
+        private void FilterLineAverage(ref NativeArray<byte> data, int offset, int width, int bpp) {
             for (var position = offset + 1; position <= width * bpp + offset; position++) {
                 var current = data[position];
                 var left = position - offset > bpp ? data[position - bpp] : 0;
                 var back = width * bpp + 1;
                 var above = position > back ? data[position - back] : 0;
                 data[position] = (byte) (current + (byte) ((left + above) / 2));
-                if ((position - offset) % bpp != 0 || position == offset + 1) continue;
-                
-                var posR = position - bpp + 1;
-                tmpScanlineColor[(posR - offset - 1) / bpp] = new Color32(data[posR], data[posR + 1], data[posR + 2], bpp == 4 ? data[posR + 3] : byte.MaxValue);
             }
         }
         
         [BurstCompile]
-        private void FilterLinePaeth(ref NativeArray<byte> data, int offset, int width, int bpp, ref Color32[] tmpScanlineColor) {
+        private void FilterLinePaeth(ref NativeArray<byte> data, int offset, int width, int bpp) {
             for (var position = offset + 1; position <= width * bpp + offset; position++) {
                 var current = data[position];
                 var left = position - offset > bpp ? data[position - bpp] : 0;
@@ -208,11 +172,6 @@ namespace LibPNG {
                 }else {
                     data[position] = (byte)(current + aboveleft);
                 }
-                
-                if ((position - offset) % bpp != 0 || position == offset + 1) continue;
-                
-                var posR = position - bpp + 1;
-                tmpScanlineColor[(posR - offset - 1) / bpp] = new Color32(data[posR], data[posR + 1], data[posR + 2], bpp == 4 ? data[posR + 3] : byte.MaxValue);
             }
         }
     }
