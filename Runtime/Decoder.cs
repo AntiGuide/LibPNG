@@ -1,9 +1,11 @@
 using System;
 using System.IO;
 using Ionic.Zlib;
+using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
 using UnityEngine;
+using UnityEngine.Profiling;
 
 namespace LibPNG {
     public enum ChunkType {
@@ -21,7 +23,7 @@ namespace LibPNG {
         AVERAGE = 3,
         PAETH = 4,
     }
-
+    
     public struct Decoder : IJob {
         //private readonly NativeArray<byte> pngSignature = new NativeArray<byte>(new byte[]{ 137, 80, 78, 71, 13, 10, 26, 10 }, Allocator.Temp);
 
@@ -32,7 +34,7 @@ namespace LibPNG {
         public NativeArray<int> Height;
         
         private int posR;
-
+        
         public void Execute() {
             //var fileStreamBuffer = FileData.Slice(0, 8);
             
@@ -45,17 +47,17 @@ namespace LibPNG {
                 var length = BitConverterBigEndian.ToUInt32(FileData.Slice(offset,4));
                 var signedLength = checked((int) length);
 
-                var nativeSlice = FileData.Slice(offset + 4, signedLength + 8);
-                lastChunk = ChunkGenerator.GenerateChunk(nativeSlice, signedLength, metadata);
+                lastChunk = ChunkGenerator.GenerateChunk(FileData.GetSubArray(offset + 4, signedLength + 8), signedLength, ref metadata);
                 offset += 12 + signedLength;
             } while (!lastChunk);
 
             var tmpScanlineColor = new Color32[metadata.Width];
             
-            metadata.Data.Position = 0;
             NativeArray<byte> uncompressedData;
             
-            using (var zlibStream = new ZlibStream(metadata.Data, Ionic.Zlib.CompressionMode.Decompress)) {
+            var metadataData = metadata.Data;
+            var buffer = metadataData.ToArray();
+            using (var zlibStream = new ZlibStream(new MemoryStream(buffer), Ionic.Zlib.CompressionMode.Decompress)) {
                 using (var memoryStream = new MemoryStream()) {
                     zlibStream.CopyTo(memoryStream);
                     uncompressedData = new NativeArray<byte>(memoryStream.ToArray(), Allocator.Temp);
@@ -134,7 +136,8 @@ namespace LibPNG {
                 }
             }
         }
-
+        
+        [BurstCompile]
         private void FilterLineNone(in NativeArray<byte> data, int offset, int width, int bpp, ref Color32[] tmpScanlineColor) {
             for (var position = 0; position < width; position++) {
                 posR = offset + 1 + position * bpp;
@@ -142,6 +145,7 @@ namespace LibPNG {
             }
         }
         
+        [BurstCompile]
         private void FilterLineSub(ref NativeArray<byte> data, int offset, int width, int bpp, ref Color32[] tmpScanlineColor) {
             for (var position = offset + 1; position <= width * bpp + offset; position++) {
                 var left = position - offset > bpp ? data[position - bpp] : 0;
@@ -153,6 +157,7 @@ namespace LibPNG {
             }
         }
         
+        [BurstCompile]
         private void FilterLineUp(ref NativeArray<byte> data, int offset, int width, int bpp, ref Color32[] tmpScanlineColor) {
             for (var position = offset + 1; position <= width * bpp + offset; position++) {
                 var current = data[position];
@@ -166,6 +171,7 @@ namespace LibPNG {
             }
         }
         
+        [BurstCompile]
         private void FilterLineAverage(ref NativeArray<byte> data, int offset, int width, int bpp, ref Color32[] tmpScanlineColor) {
             for (var position = offset + 1; position <= width * bpp + offset; position++) {
                 var current = data[position];
@@ -180,6 +186,7 @@ namespace LibPNG {
             }
         }
         
+        [BurstCompile]
         private void FilterLinePaeth(ref NativeArray<byte> data, int offset, int width, int bpp, ref Color32[] tmpScanlineColor) {
             for (var position = offset + 1; position <= width * bpp + offset; position++) {
                 var current = data[position];

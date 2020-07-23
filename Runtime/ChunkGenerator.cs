@@ -1,11 +1,13 @@
 using System;
 using System.Diagnostics;
+using Unity.Burst;
 using Unity.Collections;
 
 namespace LibPNG {
+    [BurstCompile]
     public static class ChunkGenerator {
         /// <returns>Returns if this was the last chunk</returns>
-        public static bool GenerateChunk(NativeSlice<byte> data, int length, Metadata metadata) {
+        public static bool GenerateChunk(NativeArray<byte> data, int length, ref Metadata metadata) {
             ChunkType? chunkType = null;
             if (data[0] == 73 && data[1] == 72 && data[2] == 68 && data[3] == 82) chunkType = ChunkType.IHDR;
             else if (data[0] == 80 && data[1] == 76 && data[2] == 84 && data[3] == 69) chunkType = ChunkType.PLTE;
@@ -31,10 +33,10 @@ namespace LibPNG {
             // Chunk Data
             switch (chunkType) {
                 case ChunkType.IHDR:
-                    ReadIHDR(data.Slice(4, length), metadata);
+                    ReadIHDR(data.Slice(4, length), ref metadata);
                     return false;
                 case ChunkType.IDAT:
-                    metadata.Data.Write(data.Slice(4, length).ToArray(), 0, length); // TODO Replace with a native array
+                    metadata.Data.AddRange(data.GetSubArray(4, length)); // TODO Replace with a native array
                     return false;
                 case ChunkType.IEND:
                     return true;
@@ -43,7 +45,7 @@ namespace LibPNG {
             }
         }
         
-        public static void ReadIHDR(in NativeSlice<byte> chunkData, Metadata metadata) {
+        public static void ReadIHDR(in NativeSlice<byte> chunkData, ref Metadata metadata) {
             metadata.Width = BitConverterBigEndian.ToUInt32(chunkData.Slice(0, 4)); // Width of the image in pixels
             if (metadata.Width == 0) throw new Exception($"{nameof(metadata.Width)} may not be 0");
             
@@ -107,7 +109,8 @@ namespace LibPNG {
                 chars[i] = (char) bytes[i];
             }
             
-            return new string(chars);
+            var s = new string(chars);
+            return s;
         }
     }
 }

@@ -1,14 +1,16 @@
 using System.IO;
+using Unity.Burst;
 using Unity.Collections;
 
 namespace LibPNG {
-    public class Metadata {
+    [BurstCompile]
+    public struct Metadata {
         public uint Width;
         public uint Height;
         public byte BitDepth;
         public ColourTypeEnum ColourType;
         public InterlaceMethodEnum InterlaceMethod;
-        public readonly MemoryStream Data;
+        public readonly NativeList<byte> Data;
 
         public enum ColourTypeEnum : byte {
             GREYSCALE = 0,
@@ -24,7 +26,12 @@ namespace LibPNG {
         }
 
         public Metadata(int dataStreamCapacity) {
-            Data = new MemoryStream(dataStreamCapacity);
+            Data = new NativeList<byte>(dataStreamCapacity, Allocator.Temp);
+            Width = default;
+            Height = default;
+            BitDepth = default;
+            ColourType = default;
+            InterlaceMethod = default;
         }
     }
 }
