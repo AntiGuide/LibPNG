@@ -1,9 +1,8 @@
 using System;
-using System.Collections;
 using System.IO;
-using System.Linq;
-using Cysharp.Threading.Tasks;
 using Ionic.Zlib;
+using Unity.Collections;
+using Unity.Jobs;
 using UnityEngine;
 
 namespace LibPNG {
@@ -23,58 +22,49 @@ namespace LibPNG {
         PAETH = 4,
     }
 
-    public static class Decoder {
-        private static readonly byte[] pngSignature = { 137, 80, 78, 71, 13, 10, 26, 10 };
-        private static long posR;
+    public struct Decoder : IJob {
+        //private readonly NativeArray<byte> pngSignature = new NativeArray<byte>(new byte[]{ 137, 80, 78, 71, 13, 10, 26, 10 }, Allocator.Temp);
 
-        public static IEnumerator LoadImageAsync(this Texture2D tex, Stream fileStream) {
-            yield return LoadImageAsyncTask(fileStream).ToCoroutine(tuple => {
-                var (data, width, height) = tuple;
-                tex.Resize(width, height, TextureFormat.RGBA32, false);
-                tex.LoadRawTextureData(data);
-                tex.Apply();
-            });
-        }
+        [ReadOnly] public NativeArray<byte> FileData;
+        
+        public NativeList<byte> RawTextureData;
+        public NativeArray<int> Width;
+        public NativeArray<int> Height;
+        
+        private int posR;
 
-        private static async UniTask<(byte[], int, int)> LoadImageAsyncTask(Stream fileStream) {
-            return await UniTask.Run(() => LoadImageInternal(fileStream));
-        }
-
-        private static (byte[], int, int) LoadImageInternal(Stream fileStream) {
-            var fileStreamBuffer = new byte[8];
-            fileStream.Read(fileStreamBuffer, 0, 8);
-
-            // This signature indicates that the remainder of the datastream contains a single PNG image, consisting of a series of chunks beginning with an IHDR chunk and ending with an IEND chunk.
-            Debug.Assert(fileStreamBuffer.SequenceEqual(pngSignature), "This doesn't seem to be a PNG");
-            bool lastChunk;
-            var metadata = new Metadata(checked((int) fileStream.Length));
+        public void Execute() {
+            //var fileStreamBuffer = FileData.Slice(0, 8);
             
+            // This signature indicates that the remainder of the datastream contains a single PNG image, consisting of a series of chunks beginning with an IHDR chunk and ending with an IEND chunk.
+            //Debug.Assert(fileStreamBuffer.SequenceEqual(pngSignature), "This doesn't seem to be a PNG");
+            bool lastChunk;
+            var metadata = new Metadata(FileData.Length);
+            var offset = 8;
             do {
-                fileStreamBuffer = new byte[4];
-                fileStream.Read(fileStreamBuffer, 0, 4);
-                if (BitConverter.IsLittleEndian) Array.Reverse(fileStreamBuffer);
-
-                var length = BitConverter.ToUInt32(fileStreamBuffer, 0);
+                var length = BitConverterBigEndian.ToUInt32(FileData.Slice(offset,4));
                 var signedLength = checked((int) length);
 
-                lastChunk = ChunkGenerator.GenerateChunk(fileStream, signedLength, metadata);
+                var nativeSlice = FileData.Slice(offset + 4, signedLength + 8);
+                lastChunk = ChunkGenerator.GenerateChunk(nativeSlice, signedLength, metadata);
+                offset += 12 + signedLength;
             } while (!lastChunk);
 
             var tmpScanlineColor = new Color32[metadata.Width];
             
-            metadata.DataStream.Position = 0;
-            byte[] uncompressedData;
+            metadata.Data.Position = 0;
+            NativeArray<byte> uncompressedData;
             
-            using (var zlibStream = new ZlibStream(metadata.DataStream, Ionic.Zlib.CompressionMode.Decompress)) {
+            using (var zlibStream = new ZlibStream(metadata.Data, Ionic.Zlib.CompressionMode.Decompress)) {
                 using (var memoryStream = new MemoryStream()) {
                     zlibStream.CopyTo(memoryStream);
-                    uncompressedData = memoryStream.ToArray();
+                    uncompressedData = new NativeArray<byte>(memoryStream.ToArray(), Allocator.Temp);
                 }
             }
             
             Debug.Assert(uncompressedData.Length >= 1);
 
-            uint bytesPerPixel;
+            int bytesPerPixel;
             switch (metadata.ColourType) {
                 case Metadata.ColourTypeEnum.GREYSCALE:
                     bytesPerPixel = 1;
@@ -94,30 +84,32 @@ namespace LibPNG {
                 default:
                     throw new ArgumentOutOfRangeException();
             }
+
+            Width[0] = checked((int) metadata.Width);
+            Height[0] = checked((int) metadata.Height);
+            RawTextureData.Resize(Width[0] * Height[0] * 4, NativeArrayOptions.UninitializedMemory);
             
-            var rawTextureData = new byte[checked((int) metadata.Width) * checked((int) metadata.Height) * 4];
-            
-            for (uint aktLine = 0; aktLine < metadata.Height; aktLine++) {
-                var firstRowBytePosition = aktLine * (metadata.Width * bytesPerPixel + 1);
+            for (var aktLine = 0; aktLine < metadata.Height; aktLine++) {
+                var firstRowBytePosition = aktLine * (Width[0] * bytesPerPixel + 1);
                 Color32[] lineColors = null;
                 switch ((FilterType) uncompressedData[firstRowBytePosition]) {
                     case FilterType.NONE:
-                        FilterLineNone(uncompressedData, firstRowBytePosition, metadata.Width, bytesPerPixel, ref tmpScanlineColor);
+                        FilterLineNone(uncompressedData, firstRowBytePosition, Width[0], bytesPerPixel, ref tmpScanlineColor);
                         break;
                     case FilterType.SUB:
-                        FilterLineSub(uncompressedData, firstRowBytePosition, metadata.Width, bytesPerPixel, ref tmpScanlineColor);
+                        FilterLineSub(ref uncompressedData, firstRowBytePosition, Width[0], bytesPerPixel, ref tmpScanlineColor);
                         lineColors = tmpScanlineColor;
                         break;
                     case FilterType.UP:
-                        FilterLineUp(uncompressedData, firstRowBytePosition, metadata.Width, bytesPerPixel, ref tmpScanlineColor);
+                        FilterLineUp(ref uncompressedData, firstRowBytePosition, Width[0], bytesPerPixel, ref tmpScanlineColor);
                         lineColors = tmpScanlineColor;
                         break;
                     case FilterType.AVERAGE:
-                        FilterLineAverage(uncompressedData, firstRowBytePosition, metadata.Width, bytesPerPixel, ref tmpScanlineColor);
+                        FilterLineAverage(ref uncompressedData, firstRowBytePosition, Width[0], bytesPerPixel, ref tmpScanlineColor);
                         lineColors = tmpScanlineColor;
                         break;
                     case FilterType.PAETH:
-                        FilterLinePaeth(uncompressedData, firstRowBytePosition, metadata.Width, bytesPerPixel, ref tmpScanlineColor);
+                        FilterLinePaeth(ref uncompressedData, firstRowBytePosition, Width[0], bytesPerPixel, ref tmpScanlineColor);
                         lineColors = tmpScanlineColor;
                         break;
                     default:
@@ -126,28 +118,31 @@ namespace LibPNG {
                 
                 Debug.Assert(lineColors != null);
                 if (bytesPerPixel == 4) {
-                    Array.Copy(uncompressedData, firstRowBytePosition + 1, rawTextureData, checked((int)(metadata.Width * bytesPerPixel * aktLine)), metadata.Width * bytesPerPixel);
+                    for (var i = 0; i < lineColors.Length; i++) {
+                        RawTextureData[(int)((metadata.Height - 1 - aktLine) * metadata.Width * 4 + i * 4)] = lineColors[i].r;
+                        RawTextureData[(int)((metadata.Height - 1 - aktLine) * metadata.Width * 4 + i * 4 + 1)] = lineColors[i].g;
+                        RawTextureData[(int)((metadata.Height - 1 - aktLine) * metadata.Width * 4 + i * 4 + 2)] = lineColors[i].b;
+                        RawTextureData[(int)((metadata.Height - 1 - aktLine) * metadata.Width * 4 + i * 4 + 3)] = lineColors[i].a;
+                    }
                 } else {
                     for (var i = 0; i < lineColors.Length; i++) {
-                        rawTextureData[(metadata.Height - 1 - aktLine) * metadata.Width * 4 + i * 4] = lineColors[i].r;
-                        rawTextureData[(metadata.Height - 1 - aktLine) * metadata.Width * 4 + i * 4 + 1] = lineColors[i].g;
-                        rawTextureData[(metadata.Height - 1 - aktLine) * metadata.Width * 4 + i * 4 + 2] = lineColors[i].b;
-                        rawTextureData[(metadata.Height - 1 - aktLine) * metadata.Width * 4 + i * 4 + 3] = byte.MaxValue;
+                        RawTextureData[(int)((metadata.Height - 1 - aktLine) * metadata.Width * 4 + i * 4)] = lineColors[i].r;
+                        RawTextureData[(int)((metadata.Height - 1 - aktLine) * metadata.Width * 4 + i * 4 + 1)] = lineColors[i].g;
+                        RawTextureData[(int)((metadata.Height - 1 - aktLine) * metadata.Width * 4 + i * 4 + 2)] = lineColors[i].b;
+                        RawTextureData[(int)((metadata.Height - 1 - aktLine) * metadata.Width * 4 + i * 4 + 3)] = byte.MaxValue;
                     }
                 }
             }
-            
-            return (rawTextureData, checked((int) metadata.Width), checked((int) metadata.Height));
         }
 
-        private static void FilterLineNone(in byte[] data, uint offset, uint width, uint bpp, ref Color32[] tmpScanlineColor) {
+        private void FilterLineNone(in NativeArray<byte> data, int offset, int width, int bpp, ref Color32[] tmpScanlineColor) {
             for (var position = 0; position < width; position++) {
                 posR = offset + 1 + position * bpp;
                 tmpScanlineColor[position] = new Color32(data[posR], data[posR + 1], data[posR + 2], bpp == 4 ? data[posR + 3] : byte.MaxValue);
             }
         }
         
-        private static void FilterLineSub(in byte[] data, uint offset, uint width, uint bpp, ref Color32[] tmpScanlineColor) {
+        private void FilterLineSub(ref NativeArray<byte> data, int offset, int width, int bpp, ref Color32[] tmpScanlineColor) {
             for (var position = offset + 1; position <= width * bpp + offset; position++) {
                 var left = position - offset > bpp ? data[position - bpp] : 0;
                 data[position] = (byte) (data[position] + left);
@@ -158,7 +153,7 @@ namespace LibPNG {
             }
         }
         
-        private static void FilterLineUp(in byte[] data, uint offset, uint width, uint bpp, ref Color32[] tmpScanlineColor) {
+        private void FilterLineUp(ref NativeArray<byte> data, int offset, int width, int bpp, ref Color32[] tmpScanlineColor) {
             for (var position = offset + 1; position <= width * bpp + offset; position++) {
                 var current = data[position];
                 var back = width * bpp + 1;
@@ -171,7 +166,7 @@ namespace LibPNG {
             }
         }
         
-        private static void FilterLineAverage(in byte[] data, uint offset, uint width, uint bpp, ref Color32[] tmpScanlineColor) {
+        private void FilterLineAverage(ref NativeArray<byte> data, int offset, int width, int bpp, ref Color32[] tmpScanlineColor) {
             for (var position = offset + 1; position <= width * bpp + offset; position++) {
                 var current = data[position];
                 var left = position - offset > bpp ? data[position - bpp] : 0;
@@ -185,13 +180,12 @@ namespace LibPNG {
             }
         }
         
-        private static void FilterLinePaeth(in byte[] data, uint offset, uint width, uint bpp, ref Color32[] tmpScanlineColor) {
+        private void FilterLinePaeth(ref NativeArray<byte> data, int offset, int width, int bpp, ref Color32[] tmpScanlineColor) {
             for (var position = offset + 1; position <= width * bpp + offset; position++) {
                 var current = data[position];
                 var left = position - offset > bpp ? data[position - bpp] : 0;
                 var back = width * bpp + 1;
                 var above = position > back ? data[position - back] : 0;
-                //back += bpp;
                 var aboveleft = position - offset > bpp ? data[position - back - bpp] : 0;
                 int tmp;
                 tmp = above - aboveleft;

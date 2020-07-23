@@ -1,4 +1,5 @@
 using System.IO;
+using Unity.Collections;
 
 namespace LibPNG {
     public class Metadata {
@@ -7,7 +8,7 @@ namespace LibPNG {
         public byte BitDepth;
         public ColourTypeEnum ColourType;
         public InterlaceMethodEnum InterlaceMethod;
-        public readonly MemoryStream DataStream;
+        public readonly MemoryStream Data;
 
         public enum ColourTypeEnum : byte {
             GREYSCALE = 0,
@@ -23,7 +24,7 @@ namespace LibPNG {
         }
 
         public Metadata(int dataStreamCapacity) {
-            DataStream = new MemoryStream(dataStreamCapacity);
+            Data = new MemoryStream(dataStreamCapacity);
         }
     }
 }

@@ -1,82 +1,53 @@
 using System;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
-using System.Linq;
+using Unity.Collections;
 
 namespace LibPNG {
     public static class ChunkGenerator {
-        private static readonly Dictionary<byte[], ChunkType> chunkTypeAssociation = new Dictionary<byte[], ChunkType> {
-            {new byte[] {73, 72, 68, 82}, ChunkType.IHDR},
-            {new byte[] {80, 76, 84, 69}, ChunkType.PLTE},
-            {new byte[] {73, 68, 65, 84}, ChunkType.IDAT},
-            {new byte[] {73, 69, 78, 68}, ChunkType.IEND},
-        };
-
         /// <returns>Returns if this was the last chunk</returns>
-        public static bool GenerateChunk(Stream stream, int length, Metadata metadata) {
-            //Chunk Type
-            var chunkTypeSpan = new byte[4];
-            stream.Read(chunkTypeSpan, 0, 4);
-            var crcData = new List<byte>();
-            crcData.AddRange(chunkTypeSpan);
-            
+        public static bool GenerateChunk(NativeSlice<byte> data, int length, Metadata metadata) {
             ChunkType? chunkType = null;
-            foreach (var cta in chunkTypeAssociation.Where(cta => chunkTypeSpan.SequenceEqual(cta.Key))) {
-                chunkType = cta.Value;
-                break;
-            }
+            if (data[0] == 73 && data[1] == 72 && data[2] == 68 && data[3] == 82) chunkType = ChunkType.IHDR;
+            else if (data[0] == 80 && data[1] == 76 && data[2] == 84 && data[3] == 69) chunkType = ChunkType.PLTE;
+            else if (data[0] == 73 && data[1] == 68 && data[2] == 65 && data[3] == 84) chunkType = ChunkType.IDAT;
+            else if (data[0] == 73 && data[1] == 69 && data[2] == 78 && data[3] == 68) chunkType = ChunkType.IEND;
 
-            var isCriticalChunk = (chunkTypeSpan[0] & 32) == 0;
-            if (!isCriticalChunk) {
-                stream.Seek(length + 4, SeekOrigin.Current);
+            var isCriticalChunk = (data[0] & 32) == 0;
+            if (chunkType == null) {
+                if (isCriticalChunk) throw new NotImplementedException();
+                
                 return false;
             }
-            
+
             //var isPublicChunk = (chunkTypeSpan[1] & 32) == 0;
             //var isCompatiblePNGVersion = (chunkTypeSpan[2] & 32) == 0;
             //var isSafeToCopy = (chunkTypeSpan[3] & 32) == 1;
-
-            var chunkData = new byte[length];
-            stream.Read(chunkData, 0, length);
-            crcData.AddRange(chunkData);
             
             // CRC
-            var crcValueData = new byte[4];
-            stream.Read(crcValueData, 0, 4);
-            if (BitConverter.IsLittleEndian) Array.Reverse(crcValueData);
-            var expectedCRC = BitConverter.ToUInt32(crcValueData, 0);
-            var calculatedCRC = CRC32.Calculate(crcData);
+            var expectedCRC = BitConverterBigEndian.ToUInt32(data.Slice(4 + length, 4));
+            var calculatedCRC = CRC32.Calculate(data.Slice(0, 4 + length));
             Debug.Assert(expectedCRC == calculatedCRC, "CRC check failed. The data seems to be damaged.");
             
             // Chunk Data
             switch (chunkType) {
                 case ChunkType.IHDR:
-                    ReadIHDR(chunkData, metadata);
+                    ReadIHDR(data.Slice(4, length), metadata);
                     return false;
                 case ChunkType.IDAT:
-                    metadata.DataStream.Write(chunkData, 0, chunkData.Length);
+                    metadata.Data.Write(data.Slice(4, length).ToArray(), 0, length); // TODO Replace with a native array
                     return false;
                 case ChunkType.IEND:
                     return true;
                 default:
-                    throw new Exception($"{nameof(chunkType)} matched no known types. Type was {System.Text.Encoding.ASCII.GetString(chunkTypeSpan)}");
+                    throw new Exception($"{nameof(chunkType)} matched no known types. Type was {GetASCIIString(data.Slice(0,4))}");
             }
         }
         
-        public static void ReadIHDR(in byte[] chunkData, Metadata metadata) {
-            var subArray = new byte[4];
-            Array.Copy(chunkData, 0, subArray, 0, 4);
-            if (BitConverter.IsLittleEndian) Array.Reverse(subArray);
-            
-            metadata.Width = BitConverter.ToUInt32(subArray, 0); // Width of the image in pixels
+        public static void ReadIHDR(in NativeSlice<byte> chunkData, Metadata metadata) {
+            metadata.Width = BitConverterBigEndian.ToUInt32(chunkData.Slice(0, 4)); // Width of the image in pixels
             if (metadata.Width == 0) throw new Exception($"{nameof(metadata.Width)} may not be 0");
             
-            subArray = new byte[4];
-            Array.Copy(chunkData, 4, subArray, 0, 4);
-            if (BitConverter.IsLittleEndian) Array.Reverse(subArray);
-            
-            metadata.Height = BitConverter.ToUInt32(subArray, 0); // Height of the image in pixels
+            metadata.Height = BitConverterBigEndian.ToUInt32(chunkData.Slice(4, 4)); // Height of the image in pixels
             if (metadata.Height == 0) throw new Exception($"{nameof(metadata.Height)} may not be 0");
             
             metadata.BitDepth = chunkData[8]; // number of bits per sample or per palette index (not per pixel)
@@ -128,6 +99,15 @@ namespace LibPNG {
             metadata.InterlaceMethod = (Metadata.InterlaceMethodEnum) interlaceMethod;
 
             if (metadata.InterlaceMethod != Metadata.InterlaceMethodEnum.NO_INTERLACE) throw new NotImplementedException();
+        }
+        
+        public static string GetASCIIString(NativeSlice<byte> bytes) {
+            var chars = new char[bytes.Length];
+            for (var i = 0; i < bytes.Length; i++) {
+                chars[i] = (char) bytes[i];
+            }
+            
+            return new string(chars);
         }
     }
 }
