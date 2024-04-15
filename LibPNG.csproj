@@ -10,7 +10,7 @@
       <PackageReference Include="Microsoft.NET.Test.Sdk" Version="16.6.1" />
       <PackageReference Include="NUnit" Version="3.12.0" />
       <PackageReference Include="NUnit3TestAdapter" Version="3.16.1" />
-      <PackageReference Include="SixLabors.ImageSharp" Version="2.1.7" />
+      <PackageReference Include="SixLabors.ImageSharp" Version="2.1.8" />
       <PackageReference Include="Zlib.Portable.Signed" Version="1.11.0" />
     </ItemGroup>
 
